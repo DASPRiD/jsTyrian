@@ -13,13 +13,15 @@
     Tyrian.Screen = function(main)
     {
         this.main      = main;
+        this.canvas    = main.canvas;
         this.context   = main.context;
         this.imageData = this.context.createImageData(320, 200);
         this.palette   = [{r: 0, g: 0, b: 0}];
         this.data      = [];
         
-        for (i = 0; i < (320 * 200); i++) {
+        for (var i = 0; i < (320 * 200); i++) {
             this.data[i] = 0;
+            this.imageData.data[i * 4 + 3] = 255;
         }
         
         this.redraw();
@@ -43,10 +45,9 @@
             this.imageData.data[idx]     = color.r;
             this.imageData.data[idx + 1] = color.g;
             this.imageData.data[idx + 2] = color.b;
-            this.imageData.data[idx + 3] = 255;
         }
 
         this.context.putImageData(this.imageData, 0, 0);
-        this.context.drawImage(this.main.canvas, 0, 0, 320 * 4, 200 * 4);
+        this.context.drawImage(this.canvas, 0, 0, 320 * 4, 200 * 4);
     }
 })(window['Tyrian']);

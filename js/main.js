@@ -165,9 +165,10 @@ window['Tyrian'] = {};
      */
     Tyrian.Main.prototype.initVideo = function()
     {
-        this.canvas        = document.getElementById('canvas');
-        this.canvas.width  = 640;
-        this.canvas.height = 400;
+        this.canvas               = document.getElementById('canvas');
+        this.canvas.width         = 640;
+        this.canvas.height        = 400;
+        this.canvas.style.display = 'block';
         
         this.context = this.canvas.getContext('2d');
     }
@@ -180,15 +181,32 @@ window['Tyrian'] = {};
     Tyrian.Main.prototype.introLogos = function()
     {
         var main = this;
-        
-        this.context.fillStyle = 'rgb(0, 0, 0)';
-        this.context.fillRect(0, 0, 320, 200);
-        
-        main.picLoad.loadPic(10, false);
-        
+               
+        this.palette.fadeWhite(50, function(){
+            var colors = main.picLoad.loadPic(10, false);
+            
+            main.palette.fadePalette(colors, 50, 0, 255, function(){
+                window.setTimeout(function(){
+                    main.palette.fadeBlack(10, function(){
+                        var colors = main.picLoad.loadPic(12, false);
+                        
+                        main.palette.fadePalette(colors, 10, 0, 255, function(){
+                            window.setTimeout(function(){
+                                main.palette.fadeBlack(10, function(){
+                                    // Load menu
+                                });
+                            }, 200 * 14.375031429); 
+                        });
+                    });
+                }, 200 * 14.375031429); 
+            });
+        })
+
+        /*
         window.setTimeout(function(){
             main.picLoad.loadPic(12, false);
         }, 1000);
+        */
     }    
     
     /**

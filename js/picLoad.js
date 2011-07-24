@@ -23,7 +23,7 @@
      *
      * @param   {Integer} pcxNumber
      * @param   {Boolean} storePal
-     * @returns {void}
+     * @returns {Array}
      */
     Tyrian.PicLoad.prototype.loadPic = function(pcxNumber, storePal)
     {
@@ -80,6 +80,11 @@
             }
         }
         
-        screen.setPalette(palette);
+        if (storePal) {
+            this.main.palette.palette = palette;
+            screen.setPalette(palette);
+        }
+        
+        return palette;
     }
 })(window['Tyrian']);

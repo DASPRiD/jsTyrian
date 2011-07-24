@@ -56,7 +56,18 @@
         return diff;
     }
     
-    Tyrian.Palette.prototype.initStepFadePalette = function(diff, color, firstColor, lastColor)
+    Tyrian.Palette.prototype.initStepFadePalette = function(diff, colors, firstColor, lastColor)
+    {
+        for (var i = firstColor; i <= lastColor; i++) {
+            diff[i][0] = colors[i].r - this.palette[i].r;
+            diff[i][1] = colors[i].g - this.palette[i].g;
+            diff[i][2] = colors[i].b - this.palette[i].b;
+        }
+        
+        return diff;
+    }
+
+    Tyrian.Palette.prototype.initStepFadeSolid = function(diff, color, firstColor, lastColor)
     {
         for (var i = firstColor; i <= lastColor; i++) {
             diff[i][0] = color.r - this.palette[i].r;
@@ -83,24 +94,22 @@
             this.palette[i].r += delta[0];
             this.palette[i].g += delta[1];
             this.palette[i].b += delta[2];
-
-            
         }
         
-        return diff;
+        this.main.screen.setPalette(this.palette);
     }
-
+    
     /**
-     * Fade solid.
+     * Fade palette.
      *
-     * @param   {Array}   color
-     * @param   {Integer} steps
-     * @param   {Integer} firstColor
-     * @param   {Integer} lastColor
+     * @param   {Array}    colors
+     * @param   {Integer}  steps
+     * @param   {Integer}  firstColor
+     * @param   {Integer}  lastColor
      * @param   {Function} callback
      * @returns {void}
      */
-    Tyrian.Palette.prototype.fadeSolid = function(color, steps, firstColor, lastColor, callback)
+    Tyrian.Palette.prototype.fadePalette = function(colors, steps, firstColor, lastColor, callback)
     {
         var context = this.main.context;
         
@@ -110,7 +119,7 @@
             diff[i] = [];
         }
         
-        diff = this.initStepFadePalette(diff, color, firstColor, lastColor);
+        diff = this.initStepFadePalette(diff, colors, firstColor, lastColor);
         
         var palette = this;
         
@@ -127,7 +136,50 @@
                 callback();
             }
         }
-    }   
+        
+        stepFade();
+    }
+
+    /**
+     * Fade solid.
+     *
+     * @param   {Object}   color
+     * @param   {Integer}  steps
+     * @param   {Integer}  firstColor
+     * @param   {Integer}  lastColor
+     * @param   {Function} callback
+     * @returns {void}
+     */
+    Tyrian.Palette.prototype.fadeSolid = function(color, steps, firstColor, lastColor, callback)
+    {
+        var context = this.main.context;
+        
+        var diff = [];
+        
+        for (var i = 0; i < 256; i++) {
+            diff[i] = [];
+        }
+        
+        diff = this.initStepFadeSolid(diff, color, firstColor, lastColor);
+        
+        var palette = this;
+        
+        var stepFade = function(){
+            palette.stepFadePalette(diff, steps, firstColor, lastColor);
+            
+            steps--;
+            
+            if (steps > 0) {
+                window.setTimeout(function(){
+                    stepFade();
+                }, 16);
+            } else {
+                callback();
+            }
+        }
+        
+        stepFade();
+    }
 
     /**
      * Fade to black.
