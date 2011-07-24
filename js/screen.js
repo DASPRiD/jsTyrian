@@ -14,7 +14,7 @@
     {
         this.main      = main;
         this.context   = main.context;
-        this.imageData = this.context.createImageData(640, 400);
+        this.imageData = this.context.createImageData(320, 200);
         this.palette   = [{r: 0, g: 0, b: 0}];
         this.data      = [];
         
@@ -31,25 +31,22 @@
         
         this.redraw();
     }
-    
+
     Tyrian.Screen.prototype.redraw = function()
     {
-        var color, x, y, idx, idy;
+        var color, idx;
 
-        for (x = 0; x < 640; x++) {
-            for (y = 0; y < 400; y++) {
-                idx = (x + y * 640) * 4;
-                idy = (Math.floor(x / 2) + Math.floor(y / 2) * 320);
-                
-                color = this.palette[this.data[idy]];
-                
-                this.imageData.data[idx]     = color.r;
-                this.imageData.data[idx + 1] = color.g;
-                this.imageData.data[idx + 2] = color.b;
-                this.imageData.data[idx + 3] = 255;
-            }
+        for (var i = 0; i < (320 * 200); i++) {
+            idx   = i * 4;
+            color = this.palette[this.data[i]];
+
+            this.imageData.data[idx]     = color.r;
+            this.imageData.data[idx + 1] = color.g;
+            this.imageData.data[idx + 2] = color.b;
+            this.imageData.data[idx + 3] = 255;
         }
 
         this.context.putImageData(this.imageData, 0, 0);
+        this.context.drawImage(this.main.canvas, 0, 0, 320 * 4, 200 * 4);
     }
 })(window['Tyrian']);
