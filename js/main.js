@@ -4,7 +4,7 @@
  */
 
 /**
- * @namespace Ancera
+ * @namespace Tyrian
  */
 window['Tyrian'] = {};
 
@@ -47,7 +47,10 @@ window['Tyrian'] = {};
     {
         this.files = {
             'vendor/jDataView.js': false,
-            'sprites.js': false
+            'sprites.js': false,
+            'palette.js': false,
+            'picLoad.js': false,
+            'screen.js': false
         };
 
         for (file in this.files) {
@@ -97,7 +100,9 @@ window['Tyrian'] = {};
     {
         this.dataFiles = {
             'tyrian.shp': false,
-            'music.mus': false
+            'tyrian.pic': false,
+            'music.mus': false,
+            'palette.dat': false
         };
 
         for (file in this.dataFiles) {
@@ -124,7 +129,6 @@ window['Tyrian'] = {};
 
             for (file in main.dataFiles) {
                 if (!main.dataFiles[file]) {
-                    console.log('not');
                     return;
                 }
             }
@@ -142,15 +146,55 @@ window['Tyrian'] = {};
      */
     Tyrian.Main.prototype.init = function()
     {
-        this.sprites  = new Tyrian.Sprites(this, 'tyrian.shp');
-        this.loudness = new Tyrian.Loudness(this);
-        this.music    = new Tyrian.Music(this);
+        this.initVideo();
+
+        this.screen  = new Tyrian.Screen(this);
+        this.sprites = new Tyrian.Sprites(this, 'tyrian.shp');
+        this.palette = new Tyrian.Palette(this);
+        this.picLoad = new Tyrian.PicLoad(this);
+        //this.loudness = new Tyrian.Loudness(this);
+        //this.music    = new Tyrian.Music(this);
+        
+        this.introLogos();
     }
+    
+    /**
+     * Initiate video.
+     *
+     * @returns {void}
+     */
+    Tyrian.Main.prototype.initVideo = function()
+    {
+        this.canvas        = document.getElementById('canvas');
+        this.canvas.width  = 640;
+        this.canvas.height = 400;
+        
+        this.context = this.canvas.getContext('2d');
+    }
+    
+    /**
+     * Show intro logos.
+     *
+     * @returns {void}
+     */
+    Tyrian.Main.prototype.introLogos = function()
+    {
+        var main = this;
+        
+        this.context.fillStyle = 'rgb(0, 0, 0)';
+        this.context.fillRect(0, 0, 320, 200);
+        
+        main.picLoad.loadPic(10, false);
+        
+        window.setTimeout(function(){
+            main.picLoad.loadPic(12, false);
+        }, 1000);
+    }    
     
     /**
      * Get a data file.
      *
-     * @returns {void}
+     * @returns {String}
      */
     Tyrian.Main.prototype.getDataFile = function(filename)
     {
