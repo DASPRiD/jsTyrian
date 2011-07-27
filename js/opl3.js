@@ -286,7 +286,7 @@
     
     Channel2op.prototype.getChannelOutput = function()
     {
-        var channelOutput = 0, op1Output = 0, op2Output = 0, output = [];
+        var channelOutput = 0, op1Output = 0, op2Output = 0;
 
         // The feedback uses the last two outputs from the first operator,
         // instead of just the last one. 
@@ -365,7 +365,7 @@
     
     Channel4op.prototype.getChannelOutput = function()
     {
-        var channelOutput = 0, op1Output = 0, op2Output = 0, op3Output = 0, op4Output = 0, output = [];
+        var channelOutput = 0, op1Output = 0, op2Output = 0, op3Output = 0, op4Output = 0;
 
         var secondBaseAddress = this.baseAddress + 3;
         var secondCnt         = this.opl3.registers[secondBaseAddress + ChannelData.CHD1_CHC1_CHB1_CHA1_FB3_CNT1_Offset] & 0x1;
@@ -481,6 +481,57 @@
     DisabledChannel.prototype.keyOn            = function(){ }
     DisabledChannel.prototype.keyOff           = function(){ }
     DisabledChannel.prototype.updateOperators  = function(){ }
+    
+    /**
+     * Rhythm.
+     * 
+     * The getOperatorOutput() method in TopCymbalOperator, HighHatOperator and SnareDrumOperator 
+     * were made through purely empyrical reverse engineering of the OPL3 output.
+     */
+    var RhythmChannel = function(opl3, baseAddress, o1, o2)
+    {
+        Channel2op.call(this, opl3, baseAddress, o1, o2);
+    }
+    
+    RhythmChannel.prototype             = new Channel2op();
+    RhythmChannel.prototype.constructor = RhythmChannel;
+    
+    RhythmChannel.prototype.getChannelOutput = function()
+    {
+        var channelOutput = 0, op1Output = 0, op2Output = 0;
+        
+        // Note that, different from the common channel,
+        // we do not check to see if the Operator's envelopes are Off.
+        // Instead, we always do the calculations, 
+        // to update the publicly available phase.
+        
+        op1Output     = this.op1.getOperatorOutput(Operator.noModulator);
+        op2Output     = this.op2.getOperatorOutput(Operator.noModulator);        
+        channelOutput = (op1Output + op2Output) / 2;
+        
+        return getInFourChannels(channelOutput);        
+    }
+    
+    RhythmChannel.prototype.keyOn  = function(){ }
+    RhythmChannel.prototype.keyOff = function(){ }
+    
+    // HighHatSnareDrumChannel
+    var HighHatSnareDrumChannel = function(opl3)
+    {
+        RhythmChannel.call(opl3, 7, opl3.highHatOperator, opl3.snareDrumOperator);
+    }
+    
+    HighHatSnareDrumChannel.prototype             = new RhythmChannel();
+    HighHatSnareDrumChannel.prototype.constructor = HighHatSnareDrumChannel;
+    
+    // TomTomTopCymbalChannel
+    var TomTomTopCymbalChannel = function(opl3)
+    {
+        RhythmChannel.call(opl3, 8, opl3.tomTomOperator, opl3.topCymbalOperator);
+    }
+    
+    TomTomTopCymbalChannel.prototype             = new RhythmChannel();
+    TomTomTopCymbalChannel.prototype.constructor = TomTomTopCymbalChannel;
     
     /**
      * OPL3 data
