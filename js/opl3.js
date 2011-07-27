@@ -4,6 +4,8 @@
  */
 
 (function(Tyrian){
+    var OPL3;
+    
     /**
      * OPL3 constructor.
      *
@@ -11,6 +13,8 @@
      */
     Tyrian.Opl3 = function()
     {
+        OPL3 = this;
+        
         this.registers = [];
         this.operators = [];
         this.channel2op = [];
@@ -179,13 +183,12 @@
     /**
      * Abstract channel
      */
-    var Channel = function(opl3, baseAddress)
+    var Channel = function(baseAddress)
     {
         // Factor to convert between normalized amplitude to normalized
         // radians. The amplitude maximum is equivalent to 8*Pi radians.
         this.toPhase     = 4;
-        
-        this.opl3        = opl3;
+       
         this.baseAddress = baseAddress;
         this.fnuml       = this.fnumh = this.kon = this.block = this.cha
                          = this.chb = this.chc = this.chd = this.fb = this.cnt
@@ -195,7 +198,7 @@
     
     Channel.prototype.update_2_KON1_BLOCK3_FNUMH2()
     {
-        var _2_kon1_block3_fnumh2 = this.opl3.registers[this.baseAddress + ChannelData._2_KON1_BLOCK3_FNUMH2_Offset];
+        var _2_kon1_block3_fnumh2 = OPL3.registers[this.baseAddress + ChannelData._2_KON1_BLOCK3_FNUMH2_Offset];
         
         // Frequency Number (hi-register) and Block. These two registers, together with fnuml, 
         // sets the Channel´s base frequency;
@@ -230,7 +233,7 @@
     
     Channel.prototype.update_CHD1_CHC1_CHB1_CHA1_FB3_CNT1 = function()
     {
-        var chd1_chc1_chb1_cha1_fb3_cnt1 = this.opl3.registers[this.baseAddress + ChannelData.CHD1_CHC1_CHB1_CHA1_FB3_CNT1_Offset];
+        var chd1_chc1_chb1_cha1_fb3_cnt1 = OPL3.registers[this.baseAddress + ChannelData.CHD1_CHC1_CHB1_CHA1_FB3_CNT1_Offset];
         
         this.chd = (chd1_chc1_chb1_cha1_fb3_cnt1 & 0x80) >> 7;
         this.chc = (chd1_chc1_chb1_cha1_fb3_cnt1 & 0x40) >> 6;
@@ -253,7 +256,7 @@
     {
         var output = [];
         
-        if (this.opl3._new == 0) {
+        if (OPL3._new == 0) {
             output[0] = output[1] = output[2] = output[3] = channelOutput;
         } else {
             output[0] = (this.cha == 1) ? channelOutput : 0;
@@ -273,9 +276,9 @@
     /**
      * Channel2op
      */
-    var Channel2op = function(opl3, baseAddress, o1, o2)
+    var Channel2op = function(baseAddress, o1, o2)
     {
-        Channel.call(this, opl3, baseAddress);
+        Channel.call(this, baseAddress);
         
         this.op1 = o1;
         this.op2 = o2;
@@ -340,7 +343,7 @@
     Channel2op.prototype.updateOperators = function()
     {
         // Key Scale Number, used in EnvelopeGenerator.setActualRates().
-        var keyScaleNumber = this.block * 2 + ((this.fnumh >> this.opl3.nts) & 0x01);
+        var keyScaleNumber = this.block * 2 + ((this.fnumh >> OPL3.nts) & 0x01);
         var f_number       = (this.fnumh << 8) | this.fnuml;           
         
         this.op1.updateOperator(keyScaleNumber, f_number, this.block);        
@@ -350,9 +353,9 @@
     /**
      * Channel4op
      */
-    var Channel4op = function(opl3, baseAddress, o1, o2, o3, o4)
+    var Channel4op = function(baseAddress, o1, o2, o3, o4)
     {
-        Channel.call(this, opl3, baseAddress);
+        Channel.call(this, baseAddress);
         
         this.op1 = o1;
         this.op2 = o2;
@@ -368,7 +371,7 @@
         var channelOutput = 0, op1Output = 0, op2Output = 0, op3Output = 0, op4Output = 0;
 
         var secondBaseAddress = this.baseAddress + 3;
-        var secondCnt         = this.opl3.registers[secondBaseAddress + ChannelData.CHD1_CHC1_CHB1_CHA1_FB3_CNT1_Offset] & 0x1;
+        var secondCnt         = OPL3.registers[secondBaseAddress + ChannelData.CHD1_CHC1_CHB1_CHA1_FB3_CNT1_Offset] & 0x1;
         var cnt4op            = (this.cnt << 1) | secondCnt;
         
         var feedbackOutput = (feedback[0] + feedback[1]) / 2;
@@ -456,7 +459,7 @@
     Channel4op.prototype.updateOperators = function()
     {
         // Key Scale Number, used in EnvelopeGenerator.setActualRates().
-        var keyScaleNumber = this.block * 2 + ((this.fnumh >> this.opl3.nts) & 0x01);
+        var keyScaleNumber = this.block * 2 + ((this.fnumh >> OPL3.nts) & 0x01);
         var f_number       = (this.fnumh << 8) | this.fnuml;           
         
         this.op1.updateOperator(keyScaleNumber, f_number, this.block);        
@@ -469,9 +472,9 @@
      * There's just one instance of this class, that fills the eventual gaps in
      * the Channel array;
      */
-    var DisabledChannel = function(opl3)
+    var DisabledChannel = function()
     {
-        Channel.call(this, opl3, 0);
+        Channel.call(this, 0);
     }
     
     DisabledChannel.prototype             = new Channel();
@@ -483,14 +486,217 @@
     DisabledChannel.prototype.updateOperators  = function(){ }
     
     /**
+     * Operator
+     */
+    var Operator = function(baseAddress)
+    {
+        this.baseAddress       = baseAddress;
+        this.phaseGenerator    = new PhaseGenerator();
+        this.envelopeGenerator = new EnvelopeGenerator();
+        
+        this.envelope = 0, this.phase = 0;
+        this.am = this.vib = this.ksr = this.egt = this.mult = this.ksl
+                = this.tl = this.ar = this.dr = this.sl = this.rr = this.ws
+                = 0;
+        this.keyScaleNumber = this.f_number = block = 0;
+    }
+
+    Operator.noModulator = 0;
+
+    Operator.prototype.update_AM1_VIB1_EGT1_KSR1_MULT4 = function()
+    {
+        var am1_vib1_egt1_ksr1_mult4 = OPL3.registers[this.baseAddress + OperatorData.AM1_VIB1_EGT1_KSR1_MULT4_Offset];
+        
+        // Amplitude Modulation. This register is used int EnvelopeGenerator.getEnvelope();
+        this.am = (am1_vib1_egt1_ksr1_mult4 & 0x80) >> 7;
+        
+        // Vibrato. This register is used in PhaseGenerator.getPhase();
+        this.vib = (am1_vib1_egt1_ksr1_mult4 & 0x40) >> 6;
+        
+        // Envelope Generator Type. This register is used in EnvelopeGenerator.getEnvelope();
+        this.egt = (am1_vib1_egt1_ksr1_mult4 & 0x20) >> 5;
+        
+        // Key Scale Rate. Sets the actual envelope rate together with rate and keyScaleNumber.
+        // This register os used in EnvelopeGenerator.setActualAttackRate().
+        this.ksr = (am1_vib1_egt1_ksr1_mult4 & 0x10) >> 4;
+        
+        // Multiple. Multiplies the Channel.baseFrequency to get the Operator.operatorFrequency.
+        // This register is used in PhaseGenerator.setFrequency().
+        this.mult = am1_vib1_egt1_ksr1_mult4 & 0x0f;
+        
+        this.phaseGenerator.setFrequency(this.f_number, this.block, this.mult);
+        this.envelopeGenerator.setActualAttackRate(this.ar, this.ksr, this.keyScaleNumber);
+        this.envelopeGenerator.setActualDecayRate(this.dr, this.ksr, this.keyScaleNumber); 
+        this.envelopeGenerator.setActualReleaseRate(this.rr, this.ksr, this.keyScaleNumber);        
+    }
+    
+    Operator.prototype.update_KSL2_TL6 = function()
+    {
+        var ksl2_tl6 = OPL3.registers[this.baseAddress + OperatorData.KSL2_TL6_Offset];
+        
+        // Key Scale Level. Sets the attenuation in accordance with the octave.
+        this.ksl = (ksl2_tl6 & 0xc0) >> 6;
+        
+        // Total Level. Sets the overall damping for the envelope.
+        this.tl =  ksl2_tl6 & 0x3f;
+        
+        this.envelopeGenerator.setAtennuation(this.f_number, this.block, this.ksl);
+        this.envelopeGenerator.setTotalLevel(this.tl);
+    }
+    
+    Operator.prototype.update_AR4_DR4 = function()
+    {
+        var ar4_dr4 = OPL3.registers[this.baseAddress + OperatorData.AR4_DR4_Offset];
+        
+        // Attack Rate.
+        this.ar = (ar4_dr4 & 0xf0) >> 4;
+        
+        // Decay Rate.
+        this.dr = ar4_dr4 & 0x0f;
+
+        this.envelopeGenerator.setActualAttackRate(this.ar, this.ksr, this.keyScaleNumber);
+        this.envelopeGenerator.setActualDecayRate(this.dr, this.ksr, this.keyScaleNumber);
+    }
+    
+    Operator.prototype.update_SL4_RR4 = function()
+    {     
+        var sl4_rr4 = OPL3.registers[this.baseAddress + OperatorData.SL4_RR4_Offset];
+        
+        // Sustain Level.
+        this.sl = (sl4_rr4 & 0xf0) >> 4;
+        
+        // Release Rate.
+        this.rr = sl4_rr4 & 0x0f;
+        
+        this.envelopeGenerator.setActualSustainLevel(this.sl);
+        this.envelopeGenerator.setActualReleaseRate(this.rr, this.ksr, this.keyScaleNumber);        
+    }
+    
+    Operator.prototype.update_5_WS3 = function()
+    {     
+        var _5_ws3 = OPL3.registers[this.baseAddress + OperatorData._5_WS3_Offset];
+        
+        this.ws = _5_ws3 & 0x07;
+    }
+    
+    Operator.prototype.getOperatorOutput = function(modulator)
+    {
+        if (this.envelopeGenerator.stage == EnvelopeGenerator.Stage.OFF) {
+            return 0;
+        }
+        
+        var envelopeInDB = this.envelopeGenerator.getEnvelope(this.egt, this.am);
+        this.envelope    = Math.pow(10, envelopeInDB / 10.0);
+        
+        // If it is in OPL2 mode, use first four waveforms only:
+        this.ws &= ((OPL3._new << 2) + 3); 
+        var waveform = OperatorData.waveforms[this.ws];
+        this.phase   = this.phaseGenerator.getPhase(this.vib);
+        
+        return this.getOutput(modulator, phase, waveform);
+    }
+    
+    Operator.prototype.getOutput = function(modulator, outputPhase, waveform)
+    {
+        outputPhase = (outputPhase + modulator) % 1;
+        
+        if (outputPhase < 0) {
+            outputPhase++;
+            // If the double could not afford to be less than 1:
+            outputPhase %= 1;
+        }
+        
+        var sampleIndex = Math.floor(outputPhase * OperatorData.waveLength);
+        
+        return waveform[sampleIndex] * this.envelope;
+    }    
+
+    Operator.prototype.keyOn = function()
+    {
+        if (ar > 0) {
+            this.envelopeGenerator.keyOn();
+            this.phaseGenerator.keyOn();
+        } else {
+            this.envelopeGenerator.stage = EnvelopeGenerator.Stage.OFF;
+        }
+    }
+    
+    Operator.prototype.keyOff = function()
+    {
+        this.envelopeGenerator.keyOff();
+    }
+ 
+    Operator.prototype.updateOperator = function(ksn, f_num, blk)
+    {
+        this.keyScaleNumber = ksn;
+        this.f_number       = f_num;
+        this.block          = blk;
+        
+        this.update_AM1_VIB1_EGT1_KSR1_MULT4();
+        this.update_KSL2_TL6();
+        this.update_AR4_DR4();
+        this.update_SL4_RR4();     
+        this.update_5_WS3();    
+    }
+    
+    /**
+     * Envelope generator
+     */
+    
+    /**
+     * Phase generator
+     */
+    var PhaseGenerator = function()
+    {
+        this.phase = this.phaseIncrement = 0;
+    }
+    
+    PhaseGenerator.prototype.setFrequency = function(f_number, block, mult)
+    {
+        // This frequency formula is derived from the following equation:
+        // f_number = baseFrequency * pow(2,19) / sampleRate / pow(2,block-1);        
+        var baseFrequency     = f_number * Math.pow(2, block - 1) * OPL3Data.sampleRate / Math.pow(2, 19);
+        var operatorFrequency = baseFrequency * OperatorData.multTable[mult];
+        
+        // phase goes from 0 to 1 at 
+        // period = (1/frequency) seconds ->
+        // Samples in each period is (1/frequency)*sampleRate =
+        // = sampleRate/frequency ->
+        // So the increment in each sample, to go from 0 to 1, is:
+        // increment = (1-0) / samples in the period -> 
+        // increment = 1 / (OPL3Data.sampleRate/operatorFrequency) ->
+        this.phaseIncrement = operatorFrequency / OPL3Data.sampleRate;
+    }
+    
+    PhaseGenerator.prototype.getPhase = function(vib)
+    {
+        if (vib == 1) {
+            // phaseIncrement = (operatorFrequency * vibrato) / sampleRate
+            this.phase += this.phaseIncrement * OPL3Data.vibratoTable[OPL3.dvb][OPL3.vibratoIndex];
+        } else {
+            // phaseIncrement = operatorFrequency / sampleRate
+            this.phase += this.phaseIncrement;
+        }
+        
+        this.phase %= 1;
+        
+        return this.phase;
+    }
+    
+    PhaseGenerator.prototype.keyOn = function()
+    {
+        this.phase = 0;
+    }
+    
+    /**
      * Rhythm.
      * 
      * The getOperatorOutput() method in TopCymbalOperator, HighHatOperator and SnareDrumOperator 
      * were made through purely empyrical reverse engineering of the OPL3 output.
      */
-    var RhythmChannel = function(opl3, baseAddress, o1, o2)
+    var RhythmChannel = function(baseAddress, o1, o2)
     {
-        Channel2op.call(this, opl3, baseAddress, o1, o2);
+        Channel2op.call(this, baseAddress, o1, o2);
     }
     
     RhythmChannel.prototype             = new Channel2op();
@@ -516,23 +722,160 @@
     RhythmChannel.prototype.keyOff = function(){ }
     
     // HighHatSnareDrumChannel
-    var HighHatSnareDrumChannel = function(opl3)
+    var HighHatSnareDrumChannel = function()
     {
-        RhythmChannel.call(opl3, 7, opl3.highHatOperator, opl3.snareDrumOperator);
+        RhythmChannel.call(this, 7, OPL3.highHatOperator, OPL3.snareDrumOperator);
     }
     
     HighHatSnareDrumChannel.prototype             = new RhythmChannel();
     HighHatSnareDrumChannel.prototype.constructor = HighHatSnareDrumChannel;
     
     // TomTomTopCymbalChannel
-    var TomTomTopCymbalChannel = function(opl3)
+    var TomTomTopCymbalChannel = function()
     {
-        RhythmChannel.call(opl3, 8, opl3.tomTomOperator, opl3.topCymbalOperator);
+        RhythmChannel.call(this, 8, OPL3.tomTomOperator, OPL3.topCymbalOperator);
     }
     
     TomTomTopCymbalChannel.prototype             = new RhythmChannel();
     TomTomTopCymbalChannel.prototype.constructor = TomTomTopCymbalChannel;
     
+    // TopCymbalOperator
+    var TopCymbalOperator = function(baseAddress)
+    {
+        Operator.call(this, typeof(baseAddress) == 'undefined' ? 0x15 : baseAddress);
+    }
+    
+    TopCymbalOperator.prototype             = new Operator();
+    TopCymbalOperator.prototype.constructor = TopCymbalOperator;
+    
+    TopCymbalOperator.prototype.getOperatorOutput = function(modulator)
+    {
+        var highHatOperatorPhase =  OPL3.highHatOperator.phase * OperatorData.multTable[OPL3.highHatOperator.mult];
+        
+        // The Top Cymbal operator uses his own phase together with the High Hat phase.
+        return this.getOperatorOutput(modulator, highHatOperatorPhase);
+    }
+
+    TopCymbalOperator.prototype.getOperatorOutput = function(modulator, externalPhase)
+    {
+        var envelopeInDB = envelopeGenerator.getEnvelope(this.egt, this.am);
+        this.envelope = Math.pow(10, envelopeInDB / 10.0);
+        
+        this.phase = this.phaseGenerator.getPhase(this.vib);
+        
+        var waveIndex = this.ws & ((OPL3._new << 2) + 3); 
+        var waveform  = OperatorData.waveforms[waveIndex];
+        
+        // Empirically tested multiplied phase for the Top Cymbal:
+        var carrierPhase    = (8 * this.phase) % 1;
+        var modulatorPhase  = externalPhase;
+        var modulatorOutput = this.getOutput(Operator.noModulator, modulatorPhase, waveform);
+        var carrierOutput   = this.getOutput(modulatorOutput, carrierPhase, waveform);
+        
+        var cycles = 4; 
+        
+        if ((carrierPhase * cycles) % cycles > 0.1) {
+            carrierOutput = 0;
+        }
+        
+        return carrierOutput * 2;  
+    }    
+
+    // HighHatOperator
+    var HighHatOperator = function()
+    {
+        TopCymbalOperator.call(this, 0x11);
+    }
+    
+    HighHatOperator.prototype             = new OpeTopCymbalOperatorrator();
+    HighHatOperator.prototype.constructor = HighHatOperator;
+    
+    HighHatOperator.prototype.getOperatorOutput = function(modulator)
+    {
+        var topCymbalOperatorPhase = OPL3.topCymbalOperator.phase * OperatorData.multTable[OPL3.topCymbalOperator.mult];
+
+        var operatorOutput = TopCymbalOperator.prototype.getOperatorOutput.call(this, modulator, topCymbalOperatorPhase);
+        
+        if (operatorOutput == 0) {
+            operatorOutput = Math.random() * this.envelope;
+        }
+        
+        return operatorOutput;
+    }
+
+    // SnareDrumOperator
+    var SnareDrumOperator = function()
+    {
+        Operator.call(this, 0x14);
+    }
+    
+    SnareDrumOperator.prototype             = new Operator();
+    SnareDrumOperator.prototype.constructor = SnareDrumOperator;
+    
+    SnareDrumOperator.prototype.getOperatorOutput = function(modulator)
+    {
+        if (this.envelopeGenerator.stage == EnvelopeGenerator.Stage.OFF) {
+            return 0;
+        }
+        
+        var envelopeInDB = this.envelopeGenerator.getEnvelope(this.egt, this.am);
+        this.envelope    = Math.pow(10, envelopeInDB / 10.0);
+        
+        // If it is in OPL2 mode, use first four waveforms only:
+        var waveIndex = this.ws & ((OPL3._new << 2) + 3); 
+        var waveform  = OperatorData.waveforms[waveIndex];
+        
+        this.phase = OPL3.highHatOperator.phase * 2;
+        
+        this.operatorOutput = this.getOutput(modulator, phase, waveform);
+
+        var noise = Math.random() * this.envelope;        
+        
+        if (operatorOutput / this.envelope != 1 && operatorOutput / this.envelope != -1) {
+            if (operatorOutput > 0) {
+                operatorOutput = noise;
+            } else if (operatorOutput < 0) {
+                operatorOutput = -noise;
+            } else {
+                operatorOutput = 0;            
+            }
+        }
+        
+        return operatorOutput * 2;
+    }
+
+    // TomTomOperator
+    var TomTomOperator = function()
+    {
+        Operator.call(this, 0x12);
+    }
+    
+    TomTomOperator.prototype             = new Operator();
+    TomTomOperator.prototype.constructor = TomTomOperator;
+
+    // BassDrumChannel
+    var BassDrumChannel = function()
+    {
+        Channel2op.call(this, 6, new Operator(0x10), new Operator(0x13));
+    }
+    
+    BassDrumChannel.prototype             = new Channel2op();
+    BassDrumChannel.prototype.constructor = BassDrumChannel;
+
+    BassDrumChannel.prototype.getChannelOutput = function()
+    {
+        // Bass Drum ignores first operator, when it is in series.
+        if (this.cnt == 1) {
+            this.op1.ar = 0;
+        }
+        
+        return Channel2op.prototype.getChannelOutput.call(this);
+    }    
+    
+    // Key ON and OFF are unused in rhythm channels.
+    BassDrumChannel.prototype.keyOn  = function(){ }    
+    BassDrumChannel.prototype.keyOff = function(){ }    
+
     /**
      * OPL3 data
      */
@@ -548,7 +891,7 @@
         tremoloTable: [],
         
         calculateIncrement: function(begin, end, period){
-            return (end - begin) / opl3Data.sampleRate * (1 / period);
+            return (end - begin) / OPL3Data.sampleRate * (1 / period);
         }
     };
     
