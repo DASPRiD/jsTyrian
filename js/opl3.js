@@ -642,6 +642,264 @@
     /**
      * Envelope generator
      */
+    var EnvelopeGenerator = function()
+    {
+        this.stage              = EnvelopeGenerator.Stage.OFF;
+        this.actualAttackRate   = this.actualDecayRate = this.actualReleaseRate = 0;
+        this.xAttackIncrement   = this.xMinimumInAttack = 0;
+        this.dBdecayIncrement   = 0;
+        this.dBreleaseIncrement = 0;     
+        this.attenuation        = this.totalLevel = this.sustainLevel = 0;
+        this.x                  = this.dBtoX(-96);
+        this.envelope           = -96;    
+    }
+    
+    EnvelopeGenerator.Stage = {
+        OFF:     'off',
+        ATTACK:  'attack',
+        DECAY:   'decay',
+        SUSTAIN: 'sustay',
+        RELEASE: 'release'
+    };
+    EnvelopeGenerator.INFINITY = null;
+    
+    EnvelopeGenerator.prototype.setActualSustainLevel = function(sl)
+    {
+        // If all SL bits are 1, sustain level is set to -93 dB:
+        if (sl == 0x0f) {
+            this.sustainLevel = -93;
+            return;
+        } 
+        
+        // The datasheet states that the SL formula is
+        // sustainLevel = -24*d7 -12*d6 -6*d5 -3*d4,
+        // translated as:
+        this.sustainLevel = -3*sl;
+    }
+
+    EnvelopeGenerator.prototype.setTotalLevel = function(tl)
+    {
+        // The datasheet states that the TL formula is
+        // TL = -(24*d5 + 12*d4 + 6*d3 + 3*d2 + 1.5*d1 + 0.75*d0),
+        // translated as:
+        this.totalLevel = this.tl * -0.75;
+    }
+    
+    EnvelopeGenerator.prototype.setAtennuation = function(f_number, block, ksl)
+    {
+        var hi4bits = (f_number >> 6) & 0x0f;
+        
+        switch (this.ksl) {
+            case 0:
+                this.attenuation = 0;
+                break;
+                
+            case 1:
+                // ~3 dB/Octave
+                this.attenuation = OperatorData.ksl3dBtable[hi4bits][block];
+                break;
+                
+            case 2:
+                // ~1.5 dB/Octave
+                this.attenuation = OperatorData.ksl3dBtable[hi4bits][block] / 2;
+                break;
+                
+            case 3:
+                // ~6 dB/Octave
+                this.attenuation = OperatorData.ksl3dBtable[hi4bits][block]*2;
+                break;
+        }
+    }
+
+    EnvelopeGenerator.prototype.setActualAttackRate = function(attackRate, ksr, keyScaleNumber)
+    {
+        // According to the YMF278B manual's OPL3 section, the attack curve is exponential,
+        // with a dynamic range from -96 dB to 0 dB and a resolution of 0.1875 dB 
+        // per level.
+        //
+        // This method sets an attack increment and attack minimum value 
+        // that creates a exponential dB curve with 'period0to100' seconds in length
+        // and 'period10to90' seconds between 10% and 90% of the curve total level.
+        this.actualAttackRate = this.calculateActualRate(attackRate, ksr, keyScaleNumber);
+        
+        var period0to100inSeconds = EnvelopeGeneratorData.attackTimeValuesTable[actualAttackRate][0] / 1000;
+        var period0to100inSamples = Math.floor(period0to100inSeconds * OPL3Data.sampleRate);       
+        var period10to90inSeconds = EnvelopeGeneratorData.attackTimeValuesTable[actualAttackRate][1] / 1000;
+        var period10to90inSamples = Math.floor(period10to90inSeconds * OPL3Data.sampleRate);
+        
+        // The x increment is dictated by the period between 10% and 90%:
+        this.xAttackIncrement = OPL3Data.calculateIncrement(this.percentageToX(0.1), this.percentageToX(0.9), period10to90inSeconds);
+        
+        // Discover how many samples are still from the top.
+        // It cannot reach 0 dB, since x is a logarithmic parameter and would be
+        // negative infinity. So we will use -0.1875 dB as the resolution
+        // maximum.
+        //
+        // percentageToX(0.9) + samplesToTheTop*xAttackIncrement = dBToX(-0.1875); ->
+        // samplesToTheTop = (dBtoX(-0.1875) - percentageToX(0.9)) / xAttackIncrement); ->
+        // period10to100InSamples = period10to90InSamples + samplesToTheTop; ->
+        var period10to100inSamples = Math.floor(period10to90inSamples + (this.dBtoX(-0.1875) - this.percentageToX(0.9)) / this.xAttackIncrement);
+        
+        // Discover the minimum x that, through the attackIncrement value, keeps 
+        // the 10%-90% period, and reaches 0 dB at the total period:
+        this.xMinimumInAttack = this.percentageToX(0.1) - (period0to100inSamples - period10to100inSamples) * this.xAttackIncrement;
+    } 
+    
+    EnvelopeGenerator.prototype.setActualDecayRate = function(decayRate, ksr, keyScaleNumber)
+    {
+        this.actualDecayRate = this.calculateActualRate(decayRate, ksr, keyScaleNumber);
+        
+        var period10to90inSeconds = EnvelopeGeneratorData.decayAndReleaseTimeValuesTable[actualDecayRate][1] / 1000;
+        
+        // Differently from the attack curve, the decay/release curve is linear.        
+        // The dB increment is dictated by the period between 10% and 90%:
+        this.dBdecayIncrement = OPL3Data.calculateIncrement(this.percentageToDB(0.1), this.percentageToDB(0.9), period10to90inSeconds);
+    }
+    
+    EnvelopeGenerator.prototype.setActualReleaseRate = function(releaseRate, ksr, keyScaleNumber)
+    {
+        this.actualReleaseRate = this.calculateActualRate(releaseRate, ksr, keyScaleNumber);
+        
+        var period10to90inSeconds = EnvelopeGeneratorData.decayAndReleaseTimeValuesTable[actualReleaseRate][1] / 1000;
+        
+        this.dBreleaseIncrement = OPL3Data.calculateIncrement(this.percentageToDB(0.1), this.percentageToDB(0.9), period10to90inSeconds);
+    } 
+    
+    EnvelopeGenerator.prototype.calculateActualRate = function(rate, ksr, keyScaleNumber)
+    {
+        var rof        = EnvelopeGeneratorData.rateOffset[ksr][keyScaleNumber];
+        var actualRate = rate * 4 + rof;
+        
+        // If, as an example at the maximum, rate is 15 and the rate offset is 15, 
+        // the value would
+        // be 75, but the maximum allowed is 63:
+        if (actualRate > 63) {
+            actualRate = 63;
+        }
+        
+        return actualRate;
+    }
+    
+    EnvelopeGenerator.prototype.getEnvelope = function(egt, am)
+    {
+        // The datasheets attenuation values
+        // must be halved to match the real OPL3 output.
+        var envelopeSustainLevel = this.sustainLevel / 2;
+        var envelopeTremolo      =  OPL3Data.tremoloTable[OPL3.dam][OPL3.tremoloIndex] / 2;
+        var envelopeAttenuation  = this.attenuation / 2;
+        var envelopeTotalLevel   = this.totalLevel / 2;
+        var envelopeMinimum      = -96;
+        var envelopeResolution   = 0.1875;
+        var outputEnvelope;
+        
+        // Envelope generation
+        switch(this.stage) {
+            case EnvelopeGenerator.Stage.ATTACK:
+                // Since the attack is exponential, it will never reach 0 dB, so
+                // we'll work with the next to maximum in the envelope resolution.
+                if (this.envelope < -envelopeResolution && this.xAttackIncrement != -EnvelopeGeneratorData.INFINITY) {
+                    // The attack is exponential.
+                    this.envelope = -Math.pow(2, x);
+                    this.x       += this.xAttackIncrement;
+                    break;
+                } else {
+                    // It is needed here to explicitly set envelope = 0, since
+                    // only the attack can have a period of
+                    // 0 seconds and produce an infinity envelope increment.
+                    this.envelope = 0;
+                    this.stage    = EnvelopeGenerator.Stage.DECAY;
+                }
+                // Break intentionally omitted.
+                
+            case EnvelopeGenerator.Stage.DECAY:   
+                // The decay and release are linear.                
+                if (this.envelope > envelopeSustainLevel) {
+                    this.envelope -= this.dBdecayIncrement;
+                    break;
+                } else {
+                    this.stage = EnvelopeGenerator.Stage.SUSTAIN;
+                }
+                // Break intentionally omitted.
+                
+            case EnvelopeGenerator.Stage.SUSTAIN:
+                // The Sustain stage is mantained all the time of the Key ON,
+                // even if we are in non-sustaining mode.
+                // This is necessary because, if the key is still pressed, we can
+                // change back and forth the state of EGT, and it will release and
+                // hold again accordingly.
+                if (egt==1) {
+                    break;                
+                } else {
+                    if (this.envelope > envelopeMinimum) {
+                        this.envelope -= this.dBreleaseIncrement;
+                    } else {
+                        this.stage = EnvelopeGenerator.Stage.OFF;
+                    }
+                }
+                break;
+                
+            case EnvelopeGenerator.Stage.RELEASE:
+                // If we have Key OFF, only here we are in the Release stage.
+                // Now, we can turn EGT back and forth and it will have no effect,i.e.,
+                // it will release inexorably to the Off stage.
+                if (this.envelope > envelopeMinimum) {
+                    this.envelope -= this.dBreleaseIncrement;
+                } else {
+                    this.stage = EnvelopeGenerator.Stage.OFF;
+                }
+        }
+        
+        // Ongoing original envelope
+        outputEnvelope = this.envelope;    
+        
+        //Tremolo
+        if (am == 1) {
+            outputEnvelope += envelopeTremolo;
+        }
+
+        //Attenuation
+        outputEnvelope += envelopeAttenuation;
+
+        //Total Level
+        outputEnvelope += envelopeTotalLevel;
+
+        return outputEnvelope;
+    }
+
+    EnvelopeGenerator.prototype.keyOn = function()
+    {
+        // If we are taking it in the middle of a previous envelope, 
+        // start to rise from the current level:
+        // envelope = - (2 ^ x); ->
+        // 2 ^ x = -envelope ->
+        // x = log2(-envelope); ->
+        var xCurrent = OperatorData.log2(-envelope);
+        
+        this.x     = xCurrent < xMinimumInAttack ? xCurrent : xMinimumInAttack;
+        this.stage = EnvelopeGenerator.Stage.ATTACK;
+    }
+    
+    EnvelopeGenerator.prototype.keyOff = function()
+    {
+        if (this.stage != EnvelopeGenerator.Stage.OFF) {
+            this.stage = EnvelopeGenerator.Stage.RELEASE;
+        }
+    }
+    
+    EnvelopeGenerator.prototype.dBtoX = function(dB)
+    {
+        return OperatorData.log2(-dB);
+    }
+
+    EnvelopeGenerator.prototype.percentageToDB = function(percentage)
+    {
+        return Math.log10(percentage) * 10;
+    }    
+    
+    EnvelopeGenerator.prototype.percentageToX = function(percentage)
+    {
+        return this.dBtoX(this.percentageToDB(percentage));
+    }  
     
     /**
      * Phase generator
