@@ -177,15 +177,14 @@
     }
     
     /**
-     * Abstract channel.
-     *
-     * @param   {Tyrian.Opl3.Opl3} opl3
-     * @param   {Integer}          baseAddress
-     * @returns {Tyrian.Opl3.Channel}
+     * Abstract channel
      */
-    Tyrian.Opl3.Channel = function(opl3, baseAddress)
+    var Channel = function(opl3, baseAddress)
     {
+        // Factor to convert between normalized amplitude to normalized
+        // radians. The amplitude maximum is equivalent to 8*Pi radians.
         this.toPhase     = 4;
+        
         this.opl3        = opl3;
         this.baseAddress = baseAddress;
         this.fnuml       = this.fnumh = this.kon = this.block = this.cha
@@ -194,15 +193,294 @@
         this.feedback    = [0, 0];
     }
     
-    Tyrian.Opl3.Channel.prototype.update_2_KON1_BLOCK3_FNUMH2()
+    Channel.prototype.update_2_KON1_BLOCK3_FNUMH2()
     {
         var _2_kon1_block3_fnumh2 = this.opl3.registers[this.baseAddress + ChannelData._2_KON1_BLOCK3_FNUMH2_Offset];
         
+        // Frequency Number (hi-register) and Block. These two registers, together with fnuml, 
+        // sets the Channel´s base frequency;
         var block = (_2_kon1_block3_fnumh2 & 0x1C) >> 2;
         var fnumh = _2_kon1_block3_fnumh2 & 0x03;
         
         this.updateOperators();
+        
+        // Key On. If changed, calls Channel.keyOn() / keyOff().
+        var newKon = (_2_kon1_block3_fnumh2 & 0x20) >> 5;
+        
+        if (newKon != this.kon) {
+            if (newKon == 1) {
+                keyOn();
+            } else {
+                keyOff(); 
+            }
+            
+            this.kon = newKon;
+        }
     }
+    
+    Channel.prototype.update_FNUML8 = function()
+    {
+        var fnuml8 = OPL3.registers[this.baseAddress + ChannelData.FNUML8_Offset];
+        
+        // Frequency Number, low register.
+        this.fnuml = fnuml8 & 0xff;
+        
+        this.updateOperators();
+    }
+    
+    Channel.prototype.update_CHD1_CHC1_CHB1_CHA1_FB3_CNT1 = function()
+    {
+        var chd1_chc1_chb1_cha1_fb3_cnt1 = this.opl3.registers[this.baseAddress + ChannelData.CHD1_CHC1_CHB1_CHA1_FB3_CNT1_Offset];
+        
+        this.chd = (chd1_chc1_chb1_cha1_fb3_cnt1 & 0x80) >> 7;
+        this.chc = (chd1_chc1_chb1_cha1_fb3_cnt1 & 0x40) >> 6;
+        this.chb = (chd1_chc1_chb1_cha1_fb3_cnt1 & 0x20) >> 5;
+        this.cha = (chd1_chc1_chb1_cha1_fb3_cnt1 & 0x10) >> 4;
+        this.fb  = (chd1_chc1_chb1_cha1_fb3_cnt1 & 0x0e) >> 1;
+        this.cnt = chd1_chc1_chb1_cha1_fb3_cnt1 & 0x01;
+        
+        this.updateOperators();
+    }
+    
+    Channel.prototype.updateChannel = function()
+    {
+        this.update_2_KON1_BLOCK3_FNUMH2();
+        this.update_FNUML8();
+        this.update_CHD1_CHC1_CHB1_CHA1_FB3_CNT1();
+    }
+    
+    Channel.prototype.getInFourChannels = function(channelOutput)
+    {
+        var output = [];
+        
+        if (this.opl3._new == 0) {
+            output[0] = output[1] = output[2] = output[3] = channelOutput;
+        } else {
+            output[0] = (this.cha == 1) ? channelOutput : 0;
+            output[1] = (this.chb == 1) ? channelOutput : 0;
+            output[2] = (this.chc == 1) ? channelOutput : 0;
+            output[3] = (this.chd == 1) ? channelOutput : 0;
+        }
+        
+        return output;
+    }
+    
+    Channel.prototype.getChannelOutput = function(){ throw 'Not implemented'; }
+    Channel.prototype.keyOn            = function(){ throw 'Not implemented'; }
+    Channel.prototype.keyOff           = function(){ throw 'Not implemented'; }
+    Channel.prototype.updateOperators  = function(){ throw 'Not implemented'; }
+    
+    /**
+     * Channel2op
+     */
+    var Channel2op = function(opl3, baseAddress, o1, o2)
+    {
+        Channel.call(this, opl3, baseAddress);
+        
+        this.op1 = o1;
+        this.op2 = o2;
+    }
+    
+    Channel2op.prototype             = new Channel();
+    Channel2op.prototype.constructor = Channel2op;
+    
+    Channel2op.prototype.getChannelOutput = function()
+    {
+        var channelOutput = 0, op1Output = 0, op2Output = 0, output = [];
+
+        // The feedback uses the last two outputs from the first operator,
+        // instead of just the last one. 
+        var feedbackOutput = (this.feedback[0] + this.feedback[1]) / 2;
+
+        switch (this.cnt) {
+            // CNT = 0, the operators are in series, with the first in feedback.
+            case 0:
+                if (this.op2.envelopeGenerator.stage == EnvelopeGenerator.Stage.OFF) {
+                    return this.getInFourChannels(0);
+                }
+                
+                op1Output     = this.op1.getOperatorOutput(feedbackOutput);
+                channelOutput = this.op2.getOperatorOutput(op1Output * this.toPhase);
+                break;
+                
+            // CNT = 1, the operators are in parallel, with the first in feedback.    
+            case 1:
+                if (this.op1.envelopeGenerator.stage == EnvelopeGenerator.Stage.OFF && 
+                    this.op2.envelopeGenerator.stage == EnvelopeGenerator.Stage.OFF
+                ) {
+                    return this.getInFourChannels(0);
+                }
+                
+                op1Output     = this.op1.getOperatorOutput(feedbackOutput);
+                op2Output     = this.op2.getOperatorOutput(Operator.noModulator);
+                channelOutput = (op1Output + op2Output) / 2;
+                break;
+        }
+        
+        this.feedback[0] = this.feedback[1];
+        this.feedback[1] = (op1Output * ChannelData.feedback[this.fb]) % 1;        
+        
+        return this.getInFourChannels(channelOutput);
+    }
+    
+    Channel2op.prototype.keyOn = function()
+    {
+        this.op1.keyOn();
+        this.op2.keyOn();
+        
+        this.feedback[0] = this.feedback[1] = 0;
+    }
+    
+    Channel2op.prototype.keyOff = function()
+    {
+        this.op1.keyOff();
+        this.op2.keyOff();        
+    }
+    
+    Channel2op.prototype.updateOperators = function()
+    {
+        // Key Scale Number, used in EnvelopeGenerator.setActualRates().
+        var keyScaleNumber = this.block * 2 + ((this.fnumh >> this.opl3.nts) & 0x01);
+        var f_number       = (this.fnumh << 8) | this.fnuml;           
+        
+        this.op1.updateOperator(keyScaleNumber, f_number, this.block);        
+        this.op2.updateOperator(keyScaleNumber, f_number, this.block);     
+    }
+    
+    /**
+     * Channel4op
+     */
+    var Channel4op = function(opl3, baseAddress, o1, o2, o3, o4)
+    {
+        Channel.call(this, opl3, baseAddress);
+        
+        this.op1 = o1;
+        this.op2 = o2;
+        this.op3 = o3;
+        this.op4 = o4;
+    }
+    
+    Channel4op.prototype             = new Channel();
+    Channel4op.prototype.constructor = Channel4op;
+    
+    Channel4op.prototype.getChannelOutput = function()
+    {
+        var channelOutput = 0, op1Output = 0, op2Output = 0, op3Output = 0, op4Output = 0, output = [];
+
+        var secondBaseAddress = this.baseAddress + 3;
+        var secondCnt         = this.opl3.registers[secondBaseAddress + ChannelData.CHD1_CHC1_CHB1_CHA1_FB3_CNT1_Offset] & 0x1;
+        var cnt4op            = (this.cnt << 1) | secondCnt;
+        
+        var feedbackOutput = (feedback[0] + feedback[1]) / 2;
+        
+        switch (cnt4op) {
+            case 0:
+                if (this.op4.envelopeGenerator.stage == EnvelopeGenerator.Stage.OFF) {
+                    return this.getInFourChannels(0);
+                }
+                
+                op1Output     = this.op1.getOperatorOutput(feedbackOutput);
+                op2Output     = this.op2.getOperatorOutput(op1Output * this.toPhase);
+                op3Output     = this.op3.getOperatorOutput(op2Output * this.toPhase);
+                channelOutput = this.op4.getOperatorOutput(op3Output * this.toPhase);
+                break;
+                
+            case 1:
+                if (this.op2.envelopeGenerator.stage == EnvelopeGenerator.Stage.OFF && 
+                    this.op4.envelopeGenerator.stage == EnvelopeGenerator.Stage.OFF
+                ) {
+                    return this.getInFourChannels(0);
+                }
+                
+                op1Output     = this.op1.getOperatorOutput(feedbackOutput);
+                op2Output     = this.op2.getOperatorOutput(op1Output * this.toPhase);
+                op3Output     = this.op3.getOperatorOutput(Operator.noModulator);
+                op4Output     = this.op4.getOperatorOutput(op3Output * this.toPhase);
+                channelOutput = (op2Output + op4Output) / 2;
+                break;
+                
+            case 2:
+                if (this.op1.envelopeGenerator.stage == EnvelopeGenerator.Stage.OFF && 
+                    this.op4.envelopeGenerator.stage == EnvelopeGenerator.Stage.OFF
+                ) {
+                    return this.getInFourChannels(0);
+                }
+                
+                op1Output     = this.op1.getOperatorOutput(feedbackOutput);
+                op2Output     = this.op2.getOperatorOutput(Operator.noModulator);
+                op3Output     = this.op3.getOperatorOutput(op2Output * this.toPhase);
+                op4Output     = this.op4.getOperatorOutput(op3Output * this.toPhase);
+                channelOutput = (op1Output + op4Output) / 2;
+                break;
+                
+            case 3:
+                if (this.op1.envelopeGenerator.stage == EnvelopeGenerator.Stage.OFF && 
+                    this.op3.envelopeGenerator.stage == EnvelopeGenerator.Stage.OFF && 
+                    this.op4.envelopeGenerator.stage == EnvelopeGenerator.Stage.OFF
+                ) {
+                    return getInFourChannels(0);
+                }
+                
+                op1Output     = this.op1.getOperatorOutput(feedbackOutput);
+                op2Output     = this.op2.getOperatorOutput(Operator.noModulator);
+                op3Output     = this.op3.getOperatorOutput(op2Output * this.toPhase);               
+                op4Output     = this.op4.getOperatorOutput(Operator.noModulator);
+                channelOutput = (op1Output + op3Output + op4Output) / 3;
+                break;
+        }
+        
+        this.feedback[0] = this.feedback[1];
+        this.feedback[1] = (op1Output * ChannelData.feedback[this.fb]) % 1;        
+        
+        return this.getInFourChannels(channelOutput);
+    }
+    
+    Channel4op.prototype.keyOn = function()
+    {
+        this.op1.keyOn();
+        this.op2.keyOn();
+        this.op3.keyOn();
+        this.op4.keyOn();
+        
+        this.feedback[0] = this.feedback[1] = 0;
+    }
+    
+    Channel4op.prototype.keyOff = function()
+    {
+        this.op1.keyOff();
+        this.op2.keyOff();        
+        this.op3.keyOff();        
+        this.op4.keyOff();        
+    }
+    
+    Channel4op.prototype.updateOperators = function()
+    {
+        // Key Scale Number, used in EnvelopeGenerator.setActualRates().
+        var keyScaleNumber = this.block * 2 + ((this.fnumh >> this.opl3.nts) & 0x01);
+        var f_number       = (this.fnumh << 8) | this.fnuml;           
+        
+        this.op1.updateOperator(keyScaleNumber, f_number, this.block);        
+        this.op2.updateOperator(keyScaleNumber, f_number, this.block);     
+        this.op3.updateOperator(keyScaleNumber, f_number, this.block);     
+        this.op4.updateOperator(keyScaleNumber, f_number, this.block);     
+    }
+    
+    /**
+     * There's just one instance of this class, that fills the eventual gaps in
+     * the Channel array;
+     */
+    var DisabledChannel = function(opl3)
+    {
+        Channel.call(this, opl3, 0);
+    }
+    
+    DisabledChannel.prototype             = new Channel();
+    DisabledChannel.prototype.constructor = Channel2op;
+    
+    DisabledChannel.prototype.getChannelOutput = function(){ }
+    DisabledChannel.prototype.keyOn            = function(){ }
+    DisabledChannel.prototype.keyOff           = function(){ }
+    DisabledChannel.prototype.updateOperators  = function(){ }
     
     /**
      * OPL3 data
