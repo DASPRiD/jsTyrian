@@ -14,12 +14,298 @@
     Tyrian.Opl3 = function()
     {
         OPL3 = this;
-        
+
+        this.nts = this.dam = this.dvb = this.ryt = this.bd = this.sd = this.tom
+                 = this.tc = this.hh = this._new = this.connectionsel = 0;
+        this.vibratorIndex = this.tremoloIndex = 0;
         this.registers = [];
+        
+        this.initOperators();
+        this.initChannels2op();
+        this.initChannels4op();
+        this.initRhythmChannels();
+        this.initChannels();
+    }
+    
+    Tyrian.Opl3.prototype.initOperators = function()
+    {
+        var baseAddress;
+        // The YMF262 has 36 operators:
         this.operators = [];
-        this.channel2op = [];
-        this.channel4op = [];
-        this.channel    = [];
+        
+        for (var array = 0; array < 2; array++) {
+            this.operators[array] = [];
+            
+            for (var group = 0; group <= 0x10; group += 8) {
+                for (var offset = 0; offset < 6; offset++) {
+                    baseAddress = (array << 8) | (group + offset);
+                    operators[array][group + offset] = new Operator(baseAddress);
+                }
+            }
+        }
+        
+        // Create specific operators to switch when in rhythm mode:
+        this.highHatOperator   = new HighHatOperator();
+        this.snareDrumOperator = new SnareDrumOperator();
+        this.tomTomOperator    = new TomTomOperator();
+        this.topCymbalOperator = new TopCymbalOperator();
+    
+        // Save operators when they are in non-rhythm mode:
+        // Channel 7:
+        this.highHatOperatorInNonRhythmMode   = operators[0][0x11];
+        this.snareDrumOperatorInNonRhythmMode = operators[0][0x14];
+        
+        // Channel 8:
+        this.tomTomOperatorInNonRhythmMode    = operators[0][0x12];
+        this.topCymbalOperatorInNonRhythmMode = operators[0][0x15];
+    }
+    
+    Tyrian.Opl3.prototype.initChannels2op = function()
+    {
+        var baseAddress;
+        // The YMF262 has 18 2-op channels.
+        // Each 2-op channel can be at a serial or parallel operator configuration:
+        this.channels2op = [];
+        
+        for (var array = 0; array < 2; array++) {
+            this.channels2op[array] = [];
+            
+            for (var channelNumber = 0; channelNumber < 3; channelNumber++) {
+                baseAddress = (array << 8) | channelNumber;
+                
+                // Channels 1, 2, 3 -> Operator offsets 0x0,0x3; 0x1,0x4; 0x2,0x5
+                this.channels2op[array][channelNumber]   = new Channel2op(baseAddress, this.operators[array][channelNumber], this.operators[array][channelNumber + 0x3]);
+                
+                // Channels 4, 5, 6 -> Operator offsets 0x8,0xB; 0x9,0xC; 0xA,0xD
+                this.channels2op[array][channelNumber+3] = new Channel2op(baseAddress + 3, this.operators[array][channelNumber + 0x8], this.operators[array][channelNumber + 0xb]);
+                
+                // Channels 7, 8, 9 -> Operators 0x10,0x13; 0x11,0x14; 0x12,0x15
+                this.channels2op[array][channelNumber+6] = new Channel2op(baseAddress + 6, this.operators[array][channelNumber + 0x10], this.operators[array][channelNumber + 0x13]);
+            }   
+        }
+    }
+    
+    Tyrian.Opl3.prototype.initChannels4op = function()
+    {
+        var baseAddress;
+        // The YMF262 has 3 4-op channels in each array:
+        this.channels4op = [];
+        
+        for (var array = 0; array < 2; array++) {
+            this.channels4op[array] = [];
+            
+            for (var channelNumber = 0; channelNumber < 3; channelNumber++) {
+                baseAddress = (array << 8) | channelNumber;
+                
+                // Channels 1, 2, 3 -> Operators 0x0,0x3,0x8,0xB; 0x1,0x4,0x9,0xC; 0x2,0x5,0xA,0xD;
+                this.channels4op[array][channelNumber] = new Channel4op(
+                    baseAddress,
+                    this.operators[array][channelNumber],
+                    this.operators[array][channelNumber + 0x3],
+                    this.operators[array][channelNumber + 0x8],
+                    this.operators[array][channelNumber + 0xb]
+                );
+            }   
+        }
+    }
+
+    Tyrian.Opl3.prototype.initRhythmChannels = function()
+    {
+        this.bassDrumChannel         = new BassDrumChannel();
+        this.highHatSnareDrumChannel = new HighHatSnareDrumChannel();
+        this.tomTomTopCymbalChannel  = new TomTomTopCymbalChannel();
+    }
+    
+    Tyrian.Opl3.prototype.initChannels = function()
+    {
+        this.channels = [];
+        
+        // Channel is an abstract class that can be a 2-op, 4-op, rhythm or disabled channel, 
+        // depending on the OPL3 configuration at the time.
+        // channels[] inits as a 2-op serial channel array:
+        for (var array = 0; array < 2; array++) {
+            this.channels[array] = [];
+            
+            for (var i = 0; i < 9; i++) {
+                this.channels[array][i] = this.channels2op[array][i];
+            }
+        }
+        
+        // Unique instance to fill future gaps in the Channel array,
+        // when there will be switches between 2op and 4op mode.
+        this.disabledChannel = new DisabledChannel();
+    }
+
+    Tyrian.Opl3.prototype.update_1_NTS1_6 = function()
+    {
+        var _1_nts1_6 = this.registers[OPL3Data._1_NTS1_6_Offset];
+        
+        // Note Selection. This register is used in Channel.updateOperators() implementations,
+        // to calculate the channel´s Key Scale Number.
+        // The value of the actual envelope rate follows the value of
+        // OPL3.nts,Operator.keyScaleNumber and Operator.ksr
+        this.nts = (_1_nts1_6 & 0x40) >> 6;
+    }
+    
+    Tyrian.Opl3.prototype.update_DAM1_DVB1_RYT1_BD1_SD1_TOM1_TC1_HH1 = function()
+    {
+        var dam1_dvb1_ryt1_bd1_sd1_tom1_tc1_hh1 = this.registers[OPL3Data.DAM1_DVB1_RYT1_BD1_SD1_TOM1_TC1_HH1_Offset];
+        
+        // Depth of amplitude. This register is used in EnvelopeGenerator.getEnvelope();
+        this.dam = (dam1_dvb1_ryt1_bd1_sd1_tom1_tc1_hh1 & 0x80) >> 7;
+        
+        // Depth of vibrato. This register is used in PhaseGenerator.getPhase();
+        this.dvb = (dam1_dvb1_ryt1_bd1_sd1_tom1_tc1_hh1 & 0x40) >> 6;
+        
+        var new_ryt = (dam1_dvb1_ryt1_bd1_sd1_tom1_tc1_hh1 & 0x20) >> 5;
+        
+        if (new_ryt != this.ryt) {
+            this.ryt = new_ryt;
+            this.setRhythmMode();               
+        }
+        
+        var new_bd = (dam1_dvb1_ryt1_bd1_sd1_tom1_tc1_hh1 & 0x10) >> 4;
+        
+        if (new_bd != this.bd) {
+            this.bd = new_bd;
+            
+            if (this.bd == 1) {
+                this.bassDrumChannel.op1.keyOn();
+                this.bassDrumChannel.op2.keyOn();
+            }
+        }
+        
+        var new_sd = (dam1_dvb1_ryt1_bd1_sd1_tom1_tc1_hh1 & 0x08) >> 3;
+        
+        if (new_sd != this.sd) {
+            this.sd = new_sd;
+            
+            if (this.sd == 1) {
+                this.snareDrumOperator.keyOn();
+            } 
+        }
+        
+        var new_tom = (dam1_dvb1_ryt1_bd1_sd1_tom1_tc1_hh1 & 0x04) >> 2;
+        
+        if (new_tom != this.tom) {
+            this.tom = new_tom;
+            
+            if (this.tom == 1) {
+                this.tomTomOperator.keyOn();
+            }
+        }
+        
+        var new_tc = (dam1_dvb1_ryt1_bd1_sd1_tom1_tc1_hh1 & 0x02) >> 1;
+        
+        if (new_tc != this.tc) {
+            this.tc = new_tc;
+            
+            if (tc == 1) {
+                this.topCymbalOperator.keyOn();
+            }
+        }
+        
+        var new_hh = dam1_dvb1_ryt1_bd1_sd1_tom1_tc1_hh1 & 0x01;
+        
+        if (new_hh != this.hh) {
+            this.hh = new_hh;
+            
+            if (this.hh == 1) {
+                this.highHatOperator.keyOn();
+            }
+        }
+    }
+
+    Tyrian.Opl3.prototype.update_7_NEW1 = function()
+    {
+        var _7_new1 = OPL3.registers[OPL3Data._7_NEW1_Offset];
+        
+        // OPL2/OPL3 mode selection. This register is used in 
+        // OPL3.read(), OPL3.write() and Operator.getOperatorOutput();
+        this._new = (_7_new1 & 0x01);
+        
+        if (this._new == 1) {
+            this.setEnabledChannels();
+        }
+        
+        this.set4opConnections();                    
+    }
+
+    Tyrian.Opl3.prototype.setEnabledChannels = function()
+    {
+        var baseAddress;
+        
+        for (var array = 0; array < 2; array++) {
+            for (var i = 0; i < 9; i++) {
+                baseAddress = this.channels[array][i].baseAddress;
+                this.registers[baseAddress + ChannelData.CHD1_CHC1_CHB1_CHA1_FB3_CNT1_Offset] |= 0xf0;
+                this.channels[array][i].update_CHD1_CHC1_CHB1_CHA1_FB3_CNT1();
+            }        
+        }
+    }
+    
+    Tyrian.Opl3.prototype.update_2_CONNECTIONSEL6 = function()
+    {
+        // This method is called only if _new is set.
+        var _2_connectionsel6 = this.registers[OPL3Data._2_CONNECTIONSEL6_Offset];
+        
+        // 2-op/4-op channel selection. This register is used here to configure the OPL3.channels[] array.
+        this.connectionsel = (_2_connectionsel6 & 0x3f);
+        this.set4opConnections();
+    }
+    
+    Tyrian.Opl3.prototype.set4opConnections = function()
+    {
+        // bits 0, 1, 2 sets respectively 2-op channels (1,4), (2,5), (3,6) to 4-op operation.
+        // bits 3, 4, 5 sets respectively 2-op channels (10,13), (11,14), (12,15) to 4-op operation.
+        for (var array = 0; array < 2; array++) {
+            for (var i = 0; i < 3; i++) {
+                if (this._new == 1) {
+                    var shift         = array * 3 + i;
+                    var connectionBit = (this.connectionsel >> shift) & 0x01;
+                    
+                    if (connectionBit == 1) {
+                        this.channels[array][i]     = this.channels4op[array][i];
+                        this.channels[array][i + 3] = this.disabledChannel;
+                        this.channels[array][i].updateChannel();
+                        continue;    
+                    }
+                }
+                
+                this.channels[array][i]     = this.channels2op[array][i];
+                this.channels[array][i + 3] = this.channels2op[array][i + 3];
+                this.channels[array][i].updateChannel();
+                this.channels[array][i + 3].updateChannel();
+            }
+        }
+    } 
+    
+    Tyrian.Opl3.prototype.setRhythmMode = function()
+    {
+        var i;
+        
+        if (this.ryt == 1) {
+            this.channels[0][6]     = this.bassDrumChannel;
+            this.channels[0][7]     = this.highHatSnareDrumChannel;
+            this.channels[0][8]     = this.tomTomTopCymbalChannel;
+            this.operators[0][0x11] = this.highHatOperator;
+            this.operators[0][0x14] = this.snareDrumOperator;
+            this.operators[0][0x12] = this.tomTomOperator;
+            this.operators[0][0x15] = this.topCymbalOperator;
+        } else {
+            for (i = 6; i <= 8; i++) {
+                this.channels[0][i] = this.channels2op[0][i];
+            }
+            
+            this.operators[0][0x11] = this.highHatOperatorInNonRhythmMode;
+            this.operators[0][0x14] = this.snareDrumOperatorInNonRhythmMode;
+            this.operators[0][0x12] = this.tomTomOperatorInNonRhythmMode;
+            this.operators[0][0x15] = this.topCymbalOperatorInNonRhythmMode;                
+        }
+        
+        for (i = 6; i <= 8; i++) {
+            this.channels[0][i].updateChannel();
+        }
     }
     
     Tyrian.Opl3.prototype.read()
@@ -57,7 +343,7 @@
         // PhaseGenerator.getPhase() in each Operator.
         this.vibratoIndex++;
         
-        if (this.vibratoIndex >= OPL3Data.vibratoTable[dvb].length) {
+        if (this.vibratoIndex >= OPL3Data.vibratoTable[this.dvb].length) {
             this.vibratoIndex = 0;
         }
         
@@ -65,7 +351,7 @@
         // EnvelopeGenerator.getEnvelope() in each Operator.
         this.tremoloIndex++;
         
-        if (this.tremoloIndex >= OPL3Data.tremoloTable[dam].length) {
+        if (this.tremoloIndex >= OPL3Data.tremoloTable[this.dam].length) {
             this.tremoloIndex = 0;         
         }
         
